@@ -1,0 +1,7 @@
+{
+  "url": "https://hgdownload.soe.ucsc.edu/goldenPath/hg38/database/cytoBandIdeo.txt.gz",
+  "download_date": "2026-10-02",
+  "compressed_sha256": "c092fd7f0c1d0a3a543d1d826b3ae07a55bc9c8a9818580232ff9c8f13c60865",
+  "retained": "hg38 primary chromosomes only",
+  "rows": 863
+}

@@ -1,0 +1,56 @@
+{
+  "title": "Micro-C derived CREs in BCP-ALL",
+  "database": "data/explorer.sqlite",
+  "cytoband": null,
+  "ideogram_height": 0.35,
+  "ideogram_width": 1.0,
+  "headroom": 1.5,
+  "track_height": 0.42,
+  "loops_height": 0.5,
+  "loops_width": 1.0,
+  "bigwigs": [
+    {
+      "id": "CTCF_ER",
+      "label": "CTCF · ER",
+      "group": "CTCF",
+      "color": "#4775a5",
+      "path": "tracks/CTCF_ER.perCopy.bw"
+    },
+    {
+      "id": "CTCF_HeH",
+      "label": "CTCF · HeH",
+      "group": "CTCF",
+      "color": "#9ab4cf",
+      "path": "tracks/CTCF_HeH.perCopy.bw"
+    },
+    {
+      "id": "H3K27ac_ER",
+      "label": "H3K27ac · ER",
+      "group": "H3K27ac",
+      "color": "#d36b35",
+      "path": "tracks/H3K27ac_ER.perCopy.bw"
+    },
+    {
+      "id": "H3K27ac_HeH",
+      "label": "H3K27ac · HeH",
+      "group": "H3K27ac",
+      "color": "#efb083",
+      "path": "tracks/H3K27ac_HeH.perCopy.bw"
+    },
+    {
+      "id": "H3K4me3_ER",
+      "label": "H3K4me3 · ER",
+      "group": "H3K4me3",
+      "color": "#398475",
+      "path": "tracks/H3K4me3_ER.perCopy.bw"
+    },
+    {
+      "id": "H3K4me3_HeH",
+      "label": "H3K4me3 · HeH",
+      "group": "H3K4me3",
+      "color": "#86b8a8",
+      "path": "tracks/H3K4me3_HeH.perCopy.bw"
+    }
+  ],
+  "contacts": []
+}

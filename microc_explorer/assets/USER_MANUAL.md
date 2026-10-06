@@ -10,8 +10,8 @@ For installation, system requirements and server configuration, choose
 2. Select a **Dataset** and choose **Gene** or **Coordinates**.
 3. Enter a symbol such as `KRAS`, a GENCODE ENSG gene ID, or an interval such as
    `chr1:25,500,000-25,850,000`.
-4. Optionally select **Confirm gene / interval** to check the input before loading tracks.
-5. Select the signal tracks and optional contact map, then click **Plot region**.
+4. Optionally select **Confirm** to check the input before loading tracks.
+5. Select the signal tracks and optional contact map, then press **Enter** in the search box or click **Plot region**.
 6. Inspect the notices, figure and result tables. Download the files you need.
 
 The example query only returns gene results if that symbol is in your prepared
@@ -58,9 +58,9 @@ specified chromosome and the start must be smaller than the end.
 
 ## Confirm and plot
 
-**Confirm gene / interval** reports the resolved region, gene-associated loop count and
+**Confirm** (confirm gene / interval) reports the resolved region, gene-associated loop count and
 expanded view. It does not read BigWigs/contact matrices or render a figure. It
-retains matching loop records, so **Download loop results (CSV)** is available
+retains matching loop records, so **Loop results (CSV)** is available
 after successful confirmation, including views exceeding 2 Mb.
 
 **Plot region** performs the query and reads the selected tracks. Confirmation
@@ -90,7 +90,8 @@ used to expand a single-chromosome figure. A notice reports their presence.
 | Display bins | 600–3,600 bins summarize the displayed interval; default 1,800. More bins preserve finer displayed detail but may cost more I/O/rendering. |
 | Signal per bin: max | Maximum covered signal in each bin. Useful for displaying narrow peaks. |
 | Signal per bin: mean | Mean over covered bases; missing bases are not filled with zero. |
-| Exact BigWig summaries | Enabled by default. Disabling it uses available zoom summaries, which can be faster but may yield different values. |
+| Figure format | **SVG** (vector, sharp at any zoom) or **PNG** (300 dpi). The chosen format is shown on the page and offered first for download; the other formats are under **Other formats** and are produced when clicked. |
+| Exact BigWig summaries | Enabled by default: base-level maximum or mean per bin. Disabling it uses precomputed zoom summaries, which may yield slightly different values. |
 | Match y-axis scales within each assay | Tracks sharing a configured assay group use a common automatic scale. Disable for independent track scales. |
 | Highlight searched gene or interval | Shades the original query interval. The full plotted interval usually extends beyond this highlight. |
 | Hi-C resolution | `0` selects an automatic available resolution; otherwise enter an available positive bin size in bp. |
@@ -163,9 +164,9 @@ if the requested normalization/resolution is unavailable.
 | PNG | Raster figure at 300 dpi, convenient for slides and image software. |
 | Gene CSV | Overlapping genes and representative transcript information loaded for a plotted view. |
 
-The web preview normally uses SVG for sharp text and curves. Very large SVGs
-use a labeled PNG preview; the SVG file is still downloadable. Open **Loop table**
-and **Genes and representative transcripts** to inspect tabular results.
+The web preview uses the format chosen under **Plot settings → Figure format** (SVG by default). Very large SVGs
+use a labeled PNG preview; the SVG file is still downloadable. Switch on **Show loop table**
+and **Show genes and representative transcripts** to inspect tabular results; they load only when switched on.
 The gene table/download is not populated by confirmation alone or a blocked plot.
 
 Use the image fullscreen control or download SVG/PDF when examining fine details.
@@ -175,19 +176,13 @@ of a signal summary even when its drawing is vector.
 
 ## Sessions, storage and cleanup
 
-The web app does not create a growing folder of plot files. It keeps the current
-exports in memory, with at most one set per session and a **100 MB total export
-budget per server process**. Least recently accessed sets can be evicted to admit
-a new set. The limit concerns retained export bytes, not total server memory.
+The web app does not create a growing folder of plot files. Finished plots are kept in
+memory in a **100 MB shared cache per server process**, so a repeated identical query (yours or
+another visitor's) appears almost instantly. Least recently used plots are evicted first when the
+cache is full, and plots expire after 15 minutes without access. A released plot can be
+regenerated in about a second; retained query CSV results stay available. Files already
+downloaded to your laptop are unaffected.
 
-Connected sessions refresh their current exports every 30 seconds without
-replotting. After 120 seconds without access, exports expire; a background worker
-checks every 15 seconds. Closing the browser stops the refresh. Suspended tabs
-can also expire. **Clear current result** releases the current application-held
-exports immediately. A released plot can be regenerated; retained query CSV
-results stay available. Files already downloaded to your laptop are unaffected.
-
-Opening the manual keeps the current plot's refresh active while you stay connected.
 Results are not a permanent analysis history. Download files you want to keep.
 
 ## Common messages
@@ -221,10 +216,10 @@ server paths or credentials. See the installation guide for server-side diagnosi
 
 ## Database version and search help
 
-Version 1.4 requires a database rebuilt from the new gene-ID loop table.
+Version 1.4 and later require a database rebuilt from the new gene-ID loop table.
 Old databases cannot be upgraded by adding indexes alone. Ask the administrator
 to prepare the complete updated table with GENCODE v50 protein-coding annotation.
 
 The search field accepts up to 128 characters, described in its **?** tooltip.
-Click **Plot region** immediately below the search field to submit; Enter does
-not submit the form. Plot settings and track selections apply to that submission.
+Press **Enter** in the search field or click **Plot region** to submit. Plot settings
+and track selections apply to that submission.

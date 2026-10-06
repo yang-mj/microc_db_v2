@@ -1,19 +1,42 @@
 """SciLifeLab Serve entry point: streamlit run app.py."""
 import os
 from pathlib import Path
-import uuid
+import re
 import time
 import pandas as pd
 import streamlit as st
 from microc_explorer.core import load_config,available_sources,metadata,fingerprint
 from microc_explorer.readers import read_bigwig,read_contact
-from microc_explorer.service import run,confirm
+from microc_explorer.service import confirm,get_plot,warmup
 from microc_explorer.safety import RequestError, report_failure
-from microc_explorer.store import STORE, start_janitor
+from microc_explorer.store import PLOT_CACHE, start_janitor
 from microc_explorer.manual import render_manual
 from microc_explorer import __version__
 
-st.set_page_config(page_title='Micro-C Explorer',page_icon='🧬',layout='wide')
+st.set_page_config(page_title='Micro-C Explorer',page_icon='🧬',layout='wide',initial_sidebar_state='expanded')
+
+# Static stylesheet only: no user-supplied text is ever placed in HTML.
+st.markdown('''<style>
+.block-container{padding-top:2.2rem;padding-bottom:3rem;max-width:1500px}
+[data-testid="stSidebar"]{border-right:1px solid #e3e8ef}
+[data-testid="stSidebar"] [data-testid="stForm"]{padding:0}
+[data-testid="stMetric"]{background:#f6f8fb;border:1px solid #e3e8ef;border-radius:12px;padding:.7rem 1rem}
+[data-testid="stMetricLabel"]{color:#667085}
+h1{letter-spacing:-.02em;margin-bottom:0}
+.mc-sub{color:#667085;margin:.15rem 0 1.1rem 0;font-size:.98rem}
+.mc-step{color:#4775a5;font-weight:700;font-size:.8rem;letter-spacing:.06em;text-transform:uppercase}
+[data-testid="stImage"] img{border:1px solid #e3e8ef;border-radius:10px;background:#fff}
+</style>''',unsafe_allow_html=True)
+
+FORMAT_CHOICES={'SVG · vector, sharp at any zoom':'svg','PNG · high resolution (300 dpi)':'png'}
+FORMAT_NAMES={'svg':'SVG (vector)','png':'PNG (300 dpi)','pdf':'PDF (vector)'}
+MIME={'png':'image/png','pdf':'application/pdf','svg':'image/svg+xml'}
+SVG_PREVIEW_LIMIT=8_000_000
+
+def md_escape(text):
+    """Visitor text is shown as plain text: neutralise Markdown/LaTeX/emoji-shortcode syntax."""
+    text=''.join(ch for ch in str(text) if ch.isprintable())
+    return re.sub(r'([!-/:-@\[-`{-~])',r'\\\1',text)
 
 # Cache numeric data, not file handles, figures, mutable connections, or user results.
 @st.cache_data(max_entries=128,ttl=900,show_spinner=False)
@@ -34,23 +57,20 @@ def contact_reader(track,region,resolution):
 def cached_catalog(database,file_version):
     return metadata(database),available_sources(database)
 
-start_janitor()  # Module-level guard starts exactly one thread per process.
-if 'export_owner' not in st.session_state:
-    st.session_state.export_owner=uuid.uuid4().hex
-session_id=st.session_state.export_owner
+@st.cache_data(max_entries=4,ttl=10,show_spinner=False)
+def dataset_version(paths):
+    """File stats are re-checked at most every 10 s instead of on every widget rerun."""
+    return tuple(fingerprint(p) if p!='bundled-hg38' else p for p in paths)
 
-@st.fragment(run_every=30)
-def keep_exports_alive():
-    current=st.session_state.get('plot_result')
-    if current and current.get('has_exports') and not current.get('export_expired'):
-        if STORE.get(st.session_state.export_owner) is None:
-            current['export_expired']=True
-            st.rerun()
-keep_exports_alive()
+def fetch_format(cfg,recipe,version,fmt):
+    """Runs when a download is clicked (worker thread, no Streamlit calls). Uses the shared cache."""
+    return get_plot(cfg,recipe,(fmt,),version=version)['exports'][fmt]
+
+start_janitor()  # Module-level guard starts exactly one thread per process.
 
 st.title('Micro-C Explorer')
-st.caption('Pediatric BCP-ALL · promoter-linked chromatin interactions · hg38')
-page=st.sidebar.radio('Page',['Explore','User manual','About / dataset'])
+st.markdown('<div class="mc-sub">Pediatric BCP-ALL · promoter-linked chromatin interactions · hg38</div>',unsafe_allow_html=True)
+page=st.sidebar.radio('Page',['Explore','User manual','About / dataset'],label_visibility='collapsed')
 if page=='User manual':
     render_manual()
     st.stop()
@@ -58,7 +78,10 @@ if page=='User manual':
 config_path=os.environ.get('MICROC_CONFIG',str(Path.cwd()/'config.json'))
 try:
     cfg=load_config(config_path)
-    meta,sources=cached_catalog(cfg['database'],fingerprint(cfg['database']))
+    file_paths=(cfg['database'],cfg['_config_path'],cfg['cytoband'] if cfg.get('cytoband') else 'bundled-hg38',
+                *[t['path'] for t in cfg.get('bigwigs',[])+cfg.get('contacts',[])])
+    version=dataset_version(file_paths)
+    meta,sources=cached_catalog(cfg['database'],version[0])
 except Exception as e:
     st.error(report_failure('Cannot load the configured dataset',e))
     st.info('Open User manual in the sidebar for installation guidance. Prepare the database and set MICROC_CONFIG as described there.')
@@ -66,6 +89,7 @@ except Exception as e:
 if not sources:
     st.error('No supported loop sources exist in this database. Check loopSource values in the input TSV.')
     st.stop()
+warmup(cfg)  # once per process, in the background
 if meta.get('sample_dataset'):
     st.warning('Example dataset: this package contains only the uploaded loop excerpts. Missing subtypes/results do not indicate biological absence. Prepare your full concat_loops_v2.tab before publication.')
 
@@ -88,56 +112,54 @@ BMC, D14
 
 labels={t['id']:t['label'] for t in cfg.get('bigwigs',[])}
 contacts={t['id']:t['label'] for t in cfg.get('contacts',[])}
-# Streamlit combines the Enter hint and character counter in this element.
-# Scope the override to this form; retain the native 128-character limit and
-# describe it in the accessible help tooltip instead.
-st.markdown("""
-<style>
-[data-testid="stForm"] [data-testid="InputInstructions"] {
-    display: none;
-}
-</style>
-""", unsafe_allow_html=True)
-with st.sidebar.form('query_form',enter_to_submit=False):
+
+# ---------------------------------------------------------------- query form
+# Pressing Enter in the text box submits the form's FIRST submit button, i.e. "Plot region".
+with st.sidebar.form('query_form',enter_to_submit=True,border=False):
+    st.markdown('<span class="mc-step">Query</span>',unsafe_allow_html=True)
     source=st.selectbox('Dataset',list(sources),format_func=lambda k:sources[k])
     mode=st.radio('Search by',['Gene','Coordinates'],horizontal=True)
-    value=st.text_input('Gene symbol or genomic interval',value='KRAS',max_chars=128,help='Enter a gene symbol (for example, KRAS) or a GENCODE ENSG gene ID (with or without a version suffix) or coordinates such as chr1:25,500,000-25,850,000. Maximum input length: 128 characters. All input coordinates are 0-based, end-exclusive.')
-    submitted=st.form_submit_button('Plot region',type='primary')
-    confirmed=st.form_submit_button('Confirm gene / interval')
+    value=st.text_input('Gene symbol or genomic interval',value='KRAS',max_chars=128,
+        help='Enter a gene symbol (for example, KRAS) or a GENCODE ENSG gene ID (with or without a version suffix) or coordinates such as chr1:25,500,000-25,850,000. Maximum input length: 128 characters. All input coordinates are 0-based, end-exclusive.')
+    c_plot,c_check=st.columns([3,2])
+    submitted=c_plot.form_submit_button('Plot region',type='primary',width='stretch',help='Press Enter in the text box as a shortcut.')
+    confirmed=c_check.form_submit_button('Confirm',width='stretch',help='Confirm gene / interval: shows the resolved location and loop count without reading any tracks.')
+    st.markdown('<span class="mc-step">Tracks</span>',unsafe_allow_html=True)
     track_ids=st.multiselect('Signal tracks',list(labels),default=list(labels),format_func=labels.get)
-    contact_id=st.selectbox('Contact map',['None']+list(contacts),format_func=lambda k:contacts.get(k,k))
+    contact_id='None'
+    if contacts: contact_id=st.selectbox('Contact map',['None']+list(contacts),format_func=lambda k:contacts.get(k,k))
     with st.expander('Plot settings'):
+        fmt_label=st.radio('Figure format',list(FORMAT_CHOICES),help='The format shown on the page and offered first for download. The other formats are produced on demand when you download them.')
         bins=st.select_slider('Display bins',options=[600,1200,1800,2400,3600],value=1800)
         statistic=st.selectbox('Signal per bin',['max','mean'])
-        exact=st.checkbox('Exact BigWig summaries',value=True,help='Turn off for faster precomputed zoom summaries; values may differ.')
+        exact=st.checkbox('Exact BigWig summaries',value=True,help='Base-level maximum or mean per bin. Turn off to use the precomputed zoom summaries; values may differ slightly.')
         shared=st.checkbox('Match y-axis scales within each assay',value=True)
         highlight=st.checkbox('Highlight searched gene or interval',value=True)
-        resolution=st.number_input('Hi-C resolution (bp; 0 = automatic)',min_value=0,max_value=10_000_000,value=0,step=1000)
+        resolution=st.number_input('Hi-C resolution (bp; 0 = automatic)',min_value=0,max_value=10_000_000,value=0,step=1000) if contacts else 0
+fmt=FORMAT_CHOICES[fmt_label]
+st.sidebar.caption(f'Micro-C Explorer v{__version__}')
 
-version=(fingerprint(cfg['database']),fingerprint(cfg['_config_path']),
-         fingerprint(cfg['cytoband']) if cfg.get('cytoband') else 'bundled-hg38',
-         tuple(fingerprint(t['path']) for t in cfg.get('bigwigs',[])+cfg.get('contacts',[])))
 if confirmed or submitted:
     now=time.monotonic()
     if now-st.session_state.get('last_submit',-float('inf'))<2:
         st.warning('Please wait two seconds between requests.')
-        st.stop()
-    st.session_state.last_submit=now
-    st.session_state.pop('confirm_msg',None)
+        confirmed=submitted=False   # keep showing the current result
+    else:
+        st.session_state.last_submit=now
+        st.session_state.pop('confirm_msg',None)
 
 if confirmed:
     st.session_state.confirm_key=(version,source,mode,value)
     # Retain the checked records for CSV even when the expanded view exceeds 2 Mb.
     st.session_state.pop('plot_result',None)
-    STORE.drop(session_id)
     try:
         r=confirm(cfg,source,value,'gene' if mode=='Gene' else 'region')
         what=f'{r.gene} at {r.seed.label}' if r.gene else r.seed.label
         text=(f'{what} · {len(r.loops):,} gene-associated loop records in {sources[source]} · '
               f'expanded view {r.region.size/1e6:.3f} Mb'+('' if r.can_plot else ' (over the 2 Mb plot limit; CSV results remain available)'))
         st.session_state.confirm_msg=('success' if r.can_plot else 'warning',text)
-        st.session_state.plot_result=dict(result=r,genes=[],warnings=list(r.notices),
-            has_exports=False,query_label=f'{sources[source]} · {value}',version=version)
+        st.session_state.plot_result=dict(result=r,genes=[],warnings=list(r.notices),has_exports=False,key=None,
+            query_label=f'{sources[source]} · {value}',version=version)
     except RequestError as e: st.session_state.confirm_msg=('error',str(e))
     except Exception as e: st.session_state.confirm_msg=('error',report_failure('The input could not be checked',e))
 if st.session_state.get('confirm_key')!=(version,source,mode,value):
@@ -148,24 +170,20 @@ if 'confirm_msg' in st.session_state:
 
 if submitted:
     # Clear old results before a new request, including failures.
-    st.session_state.pop('plot_result',None); STORE.drop(session_id); st.session_state.pop('confirm_msg',None)
+    st.session_state.pop('plot_result',None); st.session_state.pop('confirm_msg',None)
+    recipe=dict(source=source,value=value,mode='gene' if mode=='Gene' else 'region',tracks=list(track_ids),
+                contact_id=None if contact_id=='None' else contact_id,bins=bins,statistic=statistic,exact=exact,
+                shared_scale=shared,resolution=int(resolution) or None,highlight_query=highlight)
     try:
+        t0=time.perf_counter()
         with st.spinner('Finding loops and drawing aligned tracks…'):
-            payload=run(cfg,source,value,'gene' if mode=='Gene' else 'region',track_ids,
-                        None if contact_id=='None' else contact_id,bins=bins,statistic=statistic,
-                        exact=exact,shared_scale=shared,resolution=int(resolution) or None,highlight_query=highlight,
-                        signal_reader=signal_reader,contact_reader=contact_reader)
-        # Numeric arrays are cached; session state retains only results/metadata.
-        payload.pop('signals',None)
-        # Exports (MBs) live in the capped, janitor-cleaned store, not in session state.
-        exports=payload.pop('exports')
-        payload['has_exports']=bool(exports)
-        if exports and not STORE.put(session_id,exports):
-            payload['has_exports']=False
-            payload['warnings'].append('The plot is larger than the server export budget and cannot be shown. Use a smaller region.')
-        del exports
-        payload['query_label']=f'{sources[source]} · {value}'
-        payload['version']=version
+            out=get_plot(cfg,recipe,(fmt,),version=version,signal_reader=signal_reader,contact_reader=contact_reader)
+            if fmt=='svg' and out['stored'] and len(out['exports']['svg'])>SVG_PREVIEW_LIMIT:
+                # Very large vector drawing: also prepare a PNG for the on-page preview.
+                out=get_plot(cfg,recipe,('svg','png'),version=version,signal_reader=signal_reader,contact_reader=contact_reader)
+        payload=out['payload']
+        payload.update(has_exports=bool(out['exports']),key=out['key'],fmt=fmt,recipe=recipe,version=version,
+                       query_label=f'{sources[source]} · {value}',elapsed=time.perf_counter()-t0,from_cache=out['from_cache'])
         st.session_state.plot_result=payload
     except RequestError as e: st.error(str(e))
     except Exception as e: st.error(report_failure('The request could not be completed',e))
@@ -175,46 +193,66 @@ if payload and payload['version']!=version:
     st.info('The dataset, track files or configuration changed. Submit your query again.')
     st.session_state.pop('plot_result',None)
     st.session_state.pop('confirm_msg',None)
-    STORE.drop(session_id)
-    payload=None
-if payload and st.button('Clear current result'):
-    STORE.drop(session_id)
-    st.session_state.pop('plot_result',None)
-    st.session_state.pop('confirm_msg',None)
     payload=None
 
+# ---------------------------------------------------------------- results
+@st.fragment
+def loop_table(df):
+    if st.toggle('Show loop table',key='show_loops',help='Loaded only when switched on, so the page stays light.'):
+        st.dataframe(df.drop(columns='id',errors='ignore'),hide_index=True,width='stretch')
+
+@st.fragment
+def gene_table(genes,filename):
+    if st.toggle('Show genes and representative transcripts',key='show_genes'):
+        table=pd.DataFrame(genes)
+        st.dataframe(table.drop(columns=['exons','cds']),hide_index=True,width='stretch')
+        st.download_button('Download genes (CSV)',lambda:table.to_csv(index=False),filename+'_genes.csv','text/csv',on_click='ignore')
 
 if not payload:
-    st.info('Choose a dataset and enter a gene symbol or coordinates, then select Plot region.')
+    st.info('Choose a dataset, enter a gene symbol or coordinates in the sidebar, then press **Enter** or click **Plot region**.')
+    cols=st.columns(3)
+    for col,(title,text) in zip(cols,[
+        ('1 · Search','Gene symbol (e.g. KRAS), ENSG ID, or hg38 coordinates (0-based, end-exclusive).'),
+        ('2 · Choose tracks','Pick ChIP signal tracks and plot settings, including SVG or high-resolution PNG output.'),
+        ('3 · Explore & export','Inspect aligned genes, loops and signal; download the figure and loop table.')]):
+        with col.container(border=True):
+            st.markdown(f'**{title}**'); st.caption(text)
 else:
     result=payload['result']
-    st.subheader(payload['query_label'])
-    st.caption(f'Expanded view: {result.region.label} · {result.region.size/1e6:.3f} Mb · {len(result.loops):,} matching records')
+    st.subheader(md_escape(payload['query_label']))
+    cre=int((result.loops.canon_annot=='CRE').sum()); no=int((result.loops.canon_annot=='noCRE').sum())
+    m1,m2,m3=st.columns(3)
+    m1.metric('Loop records',f'{len(result.loops):,}')
+    m2.metric('CRE · noCRE',f'{cre:,} · {no:,}')
+    m3.metric('Expanded view',f'{result.region.size/1e6:.3f} Mb')
+    timing=''
+    if payload.get('elapsed') is not None and payload.get('has_exports'):
+        timing=f' · ready in {payload["elapsed"]:.1f} s'+(' (shared cache)' if payload.get('from_cache') else '')
+    st.caption(f'{result.region.label}{timing}')
     for warning in payload['warnings']: st.warning(warning)
     filename=f'chr{result.region.chrom}_{result.region.start}_{result.region.end}'
-    # Always offer results, including blocked (>2 Mb) queries.
-    st.download_button('Download loop results (CSV)',result.csv(),filename+'_loops.csv','text/csv')
-    if payload['has_exports']:
-        exports=STORE.get(session_id)
-        if exports is None:
-            st.info('This plot was released from server memory (idle connection or memory limit). Select Plot region to draw it again.')
-        else:
-            # SVG is vector: sharp at any width. Fall back to PNG if it is unusually large.
-            if len(exports['svg'])<=8_000_000: st.image(exports['svg'].decode('utf-8'),width='stretch')
-            else:
-                st.image(exports['png'],width='stretch')
-                st.caption('Large plot: showing a 300 dpi PNG preview. Download SVG for vector detail.')
-            for col,fmt in zip(st.columns(3),('svg','pdf','png')):
-                mime={'png':'image/png','pdf':'application/pdf','svg':'image/svg+xml'}[fmt]
-                col.download_button(f'Download {fmt.upper()}',exports[fmt],filename+'.'+fmt,mime)
-    with st.expander('Loop table'):
-        st.dataframe(result.loops.drop(columns='id',errors='ignore'),hide_index=True,width='stretch')
-    if payload['genes']:
-        with st.expander('Genes and representative transcripts'):
-            genes=pd.DataFrame(payload['genes'])
-            st.dataframe(genes.drop(columns=['exons','cds']),hide_index=True,width='stretch')
-            st.download_button('Download genes (CSV)',genes.to_csv(index=False),filename+'_genes.csv','text/csv')
-
-# Streamlit retains script globals for fragment callbacks; do not let a preview
-# dictionary keep a second application reference after store eviction/expiry.
-exports = None
+    entry=PLOT_CACHE.get(payload['key']) if payload.get('has_exports') else None
+    if payload.get('has_exports') and entry is None:
+        st.info('This plot was released from server memory (idle time or memory limit). Select Plot region to draw it again; it takes about a second.')
+    shown=entry['exports'] if entry else {}
+    chosen=payload.get('fmt','svg')
+    if shown:
+        if chosen=='svg' and len(shown['svg'])<=SVG_PREVIEW_LIMIT: st.image(shown['svg'].decode('utf-8'),width='stretch')
+        elif chosen=='png' and 'png' in shown: st.image(shown['png'],width='stretch')
+        elif 'png' in shown:
+            st.image(shown['png'],width='stretch')
+            st.caption('Large plot: showing a 300 dpi PNG preview. Download SVG for vector detail.')
+    # Always offer results, including blocked (>2 Mb) queries. Files are produced when clicked.
+    d1,d2,d3,_=st.columns([2,2,2,3])
+    if shown and chosen in shown:
+        d1.download_button(f'Download {FORMAT_NAMES[chosen]}',shown[chosen],filename+'.'+chosen,MIME[chosen],type='primary',on_click='ignore',width='stretch')
+    d2.download_button('Loop results (CSV)',result.csv,filename+'_loops.csv','text/csv',on_click='ignore',width='stretch')
+    if shown:
+        with d3.popover('Other formats',width='stretch'):
+            for other in ('svg','png','pdf'):
+                if other==chosen: continue
+                st.download_button(FORMAT_NAMES[other],(shown[other] if other in shown else
+                    (lambda f=other:fetch_format(cfg,payload['recipe'],payload['version'],f))),
+                    filename+'.'+other,MIME[other],on_click='ignore',key=f'dl_{other}',width='stretch')
+    loop_table(result.loops)
+    if payload['genes']: gene_table(payload['genes'],filename)

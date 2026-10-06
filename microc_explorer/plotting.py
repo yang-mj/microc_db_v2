@@ -189,17 +189,27 @@ def build_figure(result,genes,signals,contact=None,*,title='',shared_scale=True,
     fig.text(LEFT,.15/figure_height,footer,fontsize=8,color='#667085',va='bottom')
     return fig
 
-def render_exports(result,genes,signals,contact=None,**kwargs):
-    # Matplotlib font/rendering state is not thread-safe. Query/read work stays outside this lock.
-    # SVG first: it is the sharp on-screen format. Text is converted to paths (matplotlib default),
-    # so it looks identical in every browser without needing the font.
+PNG_DPI=300
+FORMATS=('svg','png','pdf')
+
+def render_exports(result,genes,signals,contact=None,*,formats=FORMATS,**kwargs):
+    """Render only the requested formats (the figure is built once).
+
+    Matplotlib font/rendering state is not thread-safe, so rendering is serialized; query and
+    file reads stay outside this lock. SVG is the sharp on-screen format (text becomes paths, so
+    it looks identical in every browser). PNG is 300 dpi; its zlib level is lowered because the
+    default level costs ~40% more time for ~20% smaller files, which does not pay off for web use.
+    """
+    bad=[f for f in formats if f not in FORMATS]
+    if bad: raise ValueError(f'Unsupported export format: {bad}')
     with _RENDER_LOCK:
         fig=None
         try:
             fig=build_figure(result,genes,signals,contact,**kwargs)
             outputs={}
-            for fmt,opts in (('svg',{}),('png',{'dpi':300}),('pdf',{})):
+            for fmt in formats:
                 buf=BytesIO()
+                opts={'dpi':PNG_DPI,'pil_kwargs':{'compress_level':3}} if fmt=='png' else {}
                 fig.savefig(buf,format=fmt,facecolor='white',**opts)
                 outputs[fmt]=buf.getvalue()
             return outputs

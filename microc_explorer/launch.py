@@ -28,9 +28,11 @@ def main():
              '--server.address',args.host,'--server.port',str(args.port),
              '--server.headless=true','--server.enableCORS=true','--server.enableXsrfProtection=true',
              '--server.enableStaticServing=false','--server.disconnectedSessionTTL=60',
-             '--server.fileWatcherType=none','--server.maxUploadSize=1','--server.maxMessageSize=64',
+             '--server.fileWatcherType=none','--server.maxUploadSize=1','--server.maxMessageSize=32',
              '--client.showErrorDetails=none','--client.toolbarMode=viewer',
-             '--runner.fastReruns=false','--browser.gatherUsageStats=false']
+             '--runner.fastReruns=false','--browser.gatherUsageStats=false',
+             '--theme.base=light','--theme.primaryColor=#4775a5','--theme.backgroundColor=#ffffff',
+             '--theme.secondaryBackgroundColor=#f4f6fa','--theme.textColor=#182230']
     try:raise SystemExit(subprocess.call(command,env=env))
     except KeyboardInterrupt:raise SystemExit(130)
 

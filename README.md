@@ -1,6 +1,6 @@
 # Micro-C Explorer
 
-**Version 1.4.0** | Human GRCh38/hg38 | Linux | Streamlit
+**Version 1.5.0** | Human GRCh38/hg38 | Linux | Streamlit
 
 Micro-C Explorer is a web application for querying and visualizing curated
 chromatin interactions in pediatric B-cell precursor acute lymphoblastic leukemia
@@ -113,7 +113,7 @@ Open http://localhost:8501 on that computer. `microc-web` also works from an
 installed wheel without keeping the source folder. For a wheel-only installation:
 
 ```bash
-python -m pip install /path/to/microc_explorer-1.4.0-py3-none-any.whl
+python -m pip install /path/to/microc_explorer-1.5.0-py3-none-any.whl
 microc-web --init-config config.json
 # Edit config.json with the production database and track paths.
 microc-web --config config.json
@@ -132,7 +132,7 @@ python -m pip install -c constraints.txt '.[contact]'
 For a wheel-only installation, install its optional extra using:
 
 ```bash
-python -m pip install '/path/to/microc_explorer-1.4.0-py3-none-any.whl[contact]'
+python -m pip install '/path/to/microc_explorer-1.5.0-py3-none-any.whl[contact]'
 ```
 
 On Rocky Linux 9, building hic-straw may require `gcc-c++`, `libcurl-devel`,
@@ -185,11 +185,11 @@ outside the source directory.
 From the clean extracted directory:
 
 ```bash
-docker build --platform linux/amd64 -t microc-explorer:1.4.0 .
+docker build --platform linux/amd64 -t microc-explorer:1.5.0 .
 docker run --rm -p 127.0.0.1:8501:8501 \
   -e MICROC_CONFIG=/datasets/config.json \
   -v /absolute/path/to/datasets:/datasets:ro \
-  microc-explorer:1.4.0
+  microc-explorer:1.5.0
 ```
 
 The `datasets` directory should contain your config, database and tracks, or mount
@@ -201,7 +201,7 @@ Build optional contact readers into the image:
 
 ```bash
 docker build --platform linux/amd64 --build-arg WITH_CONTACT=1 \
-  -t microc-explorer:1.4.0-contact .
+  -t microc-explorer:1.5.0-contact .
 ```
 
 For local persistent operation add an appropriate restart policy and omit `--rm`.
@@ -324,10 +324,11 @@ credentials. Contact matrices and cytoband overrides must be local files.
 2. Choose a dataset. Only sources present in the prepared database are offered.
 3. Select **Gene** or **Coordinates**. Enter a gene symbol such as `KRAS`, or
    a region such as `chr1:25,500,000-25,850,000`.
-4. Optionally click **Confirm gene / interval** to inspect the resolved location,
+4. Optionally click **Confirm** (confirm gene / interval) to inspect the resolved location,
    loop count and expanded span. This reads no tracks and already allows loop CSV download.
 5. Choose signal tracks and, if configured, a contact map. Adjust **Plot settings**.
-6. Click **Plot region**. Allow at least two seconds between submitted requests.
+6. Press **Enter** in the search box or click **Plot region**. Allow at least two seconds between submitted requests.
+   Choose SVG or high-resolution PNG under **Plot settings → Figure format**.
 7. Read notices, inspect the figure and tables, then download the desired files.
 
 Input intervals use **hg38, 0-based, end-exclusive** coordinates. A single-base
@@ -377,20 +378,26 @@ These optional libraries/data are unnecessary for BigWig-and-loop-only hosting.
 
 ## Generated outputs, concurrency and security
 
-No web plot files are written to disk. Each session owns at most one in-memory
-export set. The process-wide store is capped at 100 MB (decimal), evicting the
-least recently accessed set before exceeding the cap. `MICROC_EXPORT_CACHE_MB`
-can lower the cap to 1–100 MB. A single oversized set is rejected; CSV remains.
-
-A lightweight heartbeat touches the current session's exports every 30 seconds;
-it does not replot or resend images. Exports expire after 120 seconds without
-access, checked by a background thread every 15 seconds. Browser close/disconnect
-stops the heartbeat, so cleanup normally occurs within about two minutes; a
-suspended browser can also expire. Clear current result and new submissions drop
-old application-held exports immediately. Streamlit's disconnected-session grace
-is 60 seconds. The 100 MB cap excludes Streamlit media/download copies, temporary
-rendering buffers, tables, numeric caches and Python overhead; use hosting memory
+No web plot files are written to disk. Finished plots are kept in a **shared in-memory
+cache**: because the datasets are curated and public, one visitor's plot also serves the next
+visitor who submits the identical query, tracks and settings (seconds saved on popular genes).
+The cache key is a hash of validated request parameters and the dataset file fingerprints; no
+session data are stored. The cache is capped at 100 MB (decimal), evicting the least recently used
+plot first; `MICROC_EXPORT_CACHE_MB` can lower the cap to 1–100 MB. A single oversized plot is
+rejected; CSV remains. Entries expire after 15 minutes without access (swept every 30 seconds),
+so memory is released when the server is idle. The cap excludes Streamlit media/download copies,
+temporary rendering buffers, tables, numeric caches and Python overhead; use hosting memory
 limits for total RSS. Files downloaded to a laptop are never deleted.
+
+Only the format chosen under **Plot settings → Figure format** (SVG or 300 dpi PNG) is rendered
+when you plot. The other formats (SVG, PNG, PDF) are produced when you click their download
+button, from the cached numeric inputs and without re-reading tracks or the database.
+
+Uncached plots and input checks are limited to `MICROC_RATE_PER_MINUTE` per minute for the whole
+process (default 240; `0` disables). This protects the server from floods that open many
+browser sessions, which the per-session two-second cooldown cannot do. **Per-visitor** limits,
+TLS, security headers (CSP, X-Frame-Options, HSTS) and authentication for private data belong
+at the hosting layer/reverse proxy: Streamlit does not let an application set response headers.
 
 SQLite connections are read-only and per request; query values are parameterized.
 Native file handles are per call. Matplotlib exports and native hic reads are
@@ -438,7 +445,7 @@ python -m pip install --upgrade -c constraints.txt .
 microc-web --config /datasets/config.json
 ```
 
-The documentation/manual update in 1.4.0 does not change the database schema or
+Versions 1.4.0 to 1.5.0 do not change the database schema (schema version 3) or
 require rebuilding an existing optimized database. Rebuild the container image
 when upgrading a container deployment. Keep the previous release for rollback.
 
@@ -448,7 +455,7 @@ The 1.3 release passed 26 functional tests against the installed wheel, includin
 SQLite queries, concurrent requests, export cleanup, synthetic BigWig/Cooler reads,
 and Streamlit confirmation/plot/download behavior. The installed launcher returned
 HTTP 200 / `ok`, and a synthetic six-track layout was inspected visually.
-The 1.4.0 update adds packaged documentation and in-app manual navigation. On
+The 1.4.0 update added packaged documentation and in-app manual navigation. On
 2026-10-02, all 28 functional tests passed against its installed wheel, including
 manual access without a configured database, keyword/topic filtering, and returning
 to the current plot after visiting the manual.
@@ -481,6 +488,17 @@ Additional documentation:
 - [Cooler](https://cooler.readthedocs.io/en/latest/)
 - [hic-straw](https://github.com/aidenlab/straw/tree/master/pybind11_python)
 
+
+## Version 1.5: speed, security and interface
+
+- BigWig signals are read once per region and binned with NumPy: values are identical to the
+  previous exact summaries (verified value-for-value, including gapped tracks) at roughly 10–30× the speed.
+- Only the selected figure format is rendered up front; others are made on demand.
+- Shared plot cache, startup warm-up of Matplotlib's font cache, lazy tables, deferred downloads
+  that no longer rerun the page.
+- Enter in the search box submits **Plot region**; **Figure format** (SVG or 300 dpi PNG) is under Plot settings.
+- Process-wide rate limiter, Markdown-escaped visitor text, `.streamlit/config.toml` with
+  hardened server settings, and a cleaner layout. No database rebuild is needed.
 
 ## Version 1.4: gene-ID preparation and loop annotations
 

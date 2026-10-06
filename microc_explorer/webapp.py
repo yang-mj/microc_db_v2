@@ -20,6 +20,8 @@ st.markdown('''<style>
 .block-container{padding-top:2.2rem;padding-bottom:3rem;max-width:1500px}
 [data-testid="stSidebar"]{border-right:1px solid #e3e8ef}
 [data-testid="stSidebar"] [data-testid="stForm"]{padding:0}
+/* Hide the typing hint and character counter; the limit stays in the help tooltip. */
+[data-testid="stSidebar"] [data-testid="stForm"] [data-testid="stTextInput"] [data-testid="InputInstructions"]{display:none !important}
 [data-testid="stMetric"]{background:#f6f8fb;border:1px solid #e3e8ef;border-radius:12px;padding:.7rem 1rem}
 [data-testid="stMetricLabel"]{color:#667085}
 h1{letter-spacing:-.02em;margin-bottom:0}
@@ -221,10 +223,16 @@ else:
     result=payload['result']
     st.subheader(md_escape(payload['query_label']))
     cre=int((result.loops.canon_annot=='CRE').sum()); no=int((result.loops.canon_annot=='noCRE').sum())
-    m1,m2,m3=st.columns(3)
+    m1,m3=st.columns(2)
     m1.metric('Loop records',f'{len(result.loops):,}')
-    m2.metric('CRE · noCRE',f'{cre:,} · {no:,}')
     m3.metric('Expanded view',f'{result.region.size/1e6:.3f} Mb')
+    cre_col,nocre_col=st.columns(2)
+    with cre_col.container(border=True):
+        st.markdown('**Cis-regulatory elements supported by histone-modification marks (CRE)**')
+        st.markdown(f'### {cre:,}')
+    with nocre_col.container(border=True):
+        st.markdown('**Promoter-linked regions without supporting epigenetic evidence (noCRE)**')
+        st.markdown(f'### {no:,}')
     timing=''
     if payload.get('elapsed') is not None and payload.get('has_exports'):
         timing=f' · ready in {payload["elapsed"]:.1f} s'+(' (shared cache)' if payload.get('from_cache') else '')

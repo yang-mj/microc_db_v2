@@ -68,23 +68,7 @@ def build_figure(result,genes,signals,contact=None,*,title='',shared_scale=True,
         ax.tick_params(axis='x',bottom=False,labelbottom=False)
         ax.set_yticks([])
         if highlight_query:
-            #ax.axvspan(result.seed.start,result.seed.end,color='#aab8cc',alpha=.14,zorder=-1)
-            if result.gene is None:
-                # Coordinate search: highlight the original input interval.
-                spans = [(result.seed.start, result.seed.end)]
-            else:
-                # Gene search: highlight the same transcript model shown in red.
-                spans = [
-                    (start, end)
-                    for g, row, start, end in packed
-                    if g["symbol"] == result.gene
-                ]
-
-            for start, end in spans:
-                ax.axvspan(
-                        start, end,
-                        color="#aab8cc", alpha=.14, zorder=-1
-                )
+            ax.axvspan(result.seed.start,result.seed.end,color='#aab8cc',alpha=.14,zorder=-1)
     fig.text(LEFT,1-.22/figure_height,title or 'Micro-C regulatory landscape',fontsize=15,weight='bold',color='#182230',va='top')
     fig.text(LEFT,1-.58/figure_height,f'hg38  |  {region.label}  |  {region.size/1e3:,.0f} kb  |  canonical promoters',fontsize=9.5,color='#667085',va='top')
     if ideo_h:
@@ -200,9 +184,6 @@ def build_figure(result,genes,signals,contact=None,*,title='',shared_scale=True,
     axes[-1].xaxis.set_major_locator(MaxNLocator(6))
     axes[-1].xaxis.set_major_formatter(FuncFormatter(lambda x,p:f'{x/1e6:.3f}'))
     axes[-1].set_xlabel(f'Chromosome {region.chrom} position (Mb)',fontsize=10,color='#475467')
-    footer=(f'BigWig: {signal_summary} per display bin; gaps = missing coverage. '+
-            ('Shared assay scales.' if shared_scale else 'Independent track scales.')) if signals else 'Gene models and gene-associated CRE/noCRE interactions.'
-    fig.text(LEFT,.15/figure_height,footer,fontsize=8,color='#667085',va='bottom')
     return fig
 
 PNG_DPI=300
